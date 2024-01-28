@@ -1,9 +1,13 @@
+# Set up libraries -----------------------------------------------------------
+
 library(shiny)
 library(ggplot2)
 library(maps)
 library(tidycensus)
 library(tidyverse)
 library(skimr)
+
+# Set up data ----------------------------------------------------------------
 
 # Read the data
 file_path <- "data/VSRR_Provisional_County-Level_Drug_Overdose_Death_Counts.csv"
@@ -24,12 +28,15 @@ data$US_region <- case_when(
     TRUE ~ NA_character_
 )
 
+# Create data frame of total deaths by county across all months and years
 total_deaths <- data %>%
         group_by(FIPS, ST_ABBREV, STATE_NAME, COUNTYNAME, STATEFIPS, COUNTYFIPS) %>%
         summarise(deaths = sum(deaths))
 
 # Add a very small constant to all zero values to avoid infinite results from log
     total_deaths[total_deaths == 0] <- 1e-10
+
+# Bring in Census data --------------------------------------------------------
 
 # # Set census API key
 # census_api_key(Sys.getenv("CENSUS_API_KEY"))
@@ -41,8 +48,20 @@ acs_complete <- load_variables(year = 2022, "acs5", cache = TRUE)
 acs_vars <- c("B01003_001", "B19013_001", "B17001_002", "B15003_017", "B25077_001", "B23025_005", "B02001_002", "B02001_003", "B03002_003")
 acs_var_names <- c("Total Population", "Median Income", "Number in Poverty", "High School Graduate Count", "Median Home Price", "Number of Unemployed", "White Population", "Black Population", "Hispanic Population")
 
-# # Create labeled vector of variable names for ACS variables
+# Create labeled vector of variable names for ACS variables
 acs_vars <- setNames(acs_vars, acs_var_names)
+
+# Request ACS data for all counties in the US
+county_pop <- get_acs(
+        geography = "county",
+        variables = acs_vars,
+        year = 2022,
+        survey = "acs5",
+        geometry = TRUE,
+        cache = TRUE
+)
+
+# Finalize dataset ----------------------------------------------------
 
 # Create a vector with variable names and descriptive names for all variables
 variable_names <- c(acs_vars, "deaths", "crude_rate")
@@ -53,16 +72,6 @@ variables <- setNames(variable_names, descriptive_names)
 
 # Create a vector with only variable names not in acs_vars
 outcome_variables <- (variables)[!((variables) %in% (acs_vars))]
-
-# Add population data
-county_pop <- get_acs(
-        geography = "county",
-        variables = acs_vars,
-        year = 2022,
-        survey = "acs5",
-        geometry = TRUE,
-        cache = TRUE
-)
 
 # Change from long to wide to create three variables with the value of estimate by each level of variable
 county_pop_wide <- county_pop %>%
@@ -82,6 +91,9 @@ county_map$crude_rate <- NA
 # Replace outcome variable names with formatted names
 names(county_map)[names(county_map) %in% outcome_variables] <- names(outcome_variables)
 
+# Functions ------------------------------------------------------------------
+
+# Create fundtion to impute deaths if selected
 impute_deaths <- function(county_map, imputeNullValues) {
     if (imputeNullValues) {
         county_map$"Count of Opioid Deaths"[is.na(county_map$"Count of Opioid Deaths")] <- 10 / sqrt(2)
@@ -92,7 +104,9 @@ impute_deaths <- function(county_map, imputeNullValues) {
     return(county_map)
 }
 
-# Shiny app
+# Shiny app ------------------------------------------------------------------
+
+# Define UI for application
 ui <- fluidPage(
     navbarPage(
         "Opioid Trends Dashboard",
@@ -128,6 +142,7 @@ ui <- fluidPage(
     )
 )
 
+# Define server logic
 server <- function(input, output) {
     output$mapPlot <- renderPlot({
         variable <- input$variable
@@ -241,9 +256,7 @@ output$trendsPlot <- renderPlot({
 
 })
 
-
-
-
 }
 
+# Run the application
 shinyApp(ui = ui, server = server)
